@@ -1,15 +1,28 @@
+import os
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy import create_engine, Column, Integer, String, MetaData, Table
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import asynccontextmanager
-from pydantic import BaseModel
+from pydantic import BaseModel, constr
 
-DATABASE_URL = "sqlite:///./test.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 metadata = MetaData()
+
+with open("test_exercise_2.txt", "r") as file:
+    data = file.readlines()
+    headers = data[0].strip().split(",")
+    columns = [Column(header, String) for header in headers if header != 'id']
+
+items_table = Table('items', metadata, Column('id', Integer,
+                                              primary_key=True,
+                                              index=True,
+                                              autoincrement=True), *columns)
+metadata.create_all(engine)
 
 
 def get_db():
@@ -22,32 +35,21 @@ def get_db():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Действия при запуске
-    with open("../test_exercise_2.txt", "r") as file:
-        data = file.readlines()
-        headers = data[0].strip().split(",")
-        columns = [Column(header, String) for header in headers if header != 'id']
-
-        global items_table
-        items_table = Table('items', metadata, Column('id', Integer, primary_key=True, index=True, autoincrement=True),
-                            *columns)
-        metadata.create_all(engine)
-
-        db = next(get_db())
-        for line in data[1:]:  # Пропускаем первую строку с заголовками
+    db = next(get_db())
+    if not db.execute(items_table.select()).fetchone():
+        for line in data[1:]:  # Skip the first line with headers
             values = line.strip().split(",")
             item_data = {header: value for header, value in zip(headers, values) if header != 'id'}
             db.execute(items_table.insert().values(**item_data))
         db.commit()
     yield
-    # Действия при завершении (если необходимо)
 
 
 app = FastAPI(lifespan=lifespan)
 
 
 class ItemCreate(BaseModel):
-    name: str
+    name: constr(min_length=1)
     email: str
     phone: str
     note: str
